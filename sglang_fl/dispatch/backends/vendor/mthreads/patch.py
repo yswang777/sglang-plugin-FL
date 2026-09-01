@@ -109,10 +109,19 @@ def apply_musa_patches() -> None:
     if _patches_applied:
         return
 
+    from .patches.attention_backend_handler import (
+        patch_glm5_attention_backend_handler,
+    )
+    from .patches.glm5_flashattention_backend import (
+        patch_glm5_musa_flashattention_backend,
+    )
+
     _patch_pp_send_recv_order()
     _patch_pp_launch_batch_add_sync()
+    patch_glm5_musa_flashattention_backend()
+    patch_glm5_attention_backend_handler()
     _patches_applied = True
-    logger.info("All MUSA PP patches applied successfully")
+    logger.info("All MUSA runtime patches applied successfully")
 
 
 apply_musa_patches()

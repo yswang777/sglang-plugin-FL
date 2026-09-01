@@ -53,6 +53,7 @@ Chip vendors only need to implement a backend class + `register_ops.py`. The dis
 |-------|-----|--------|
 | Qwen3.6-27B (Hybrid Attention + FLA + MoE) | tp=1 | Verified |
 | Qwen3.6-35B-A3B (MoE, 256 experts) | tp=1 | Verified |
+| GLM-5.3-Flash | tp=8 (MUSA) | Verified: paged MLA, full decode graph |
 | Qwen2.5-14B-Instruct | tp=8 | Verified |
 
 ## Quick Start
