@@ -88,6 +88,10 @@ MATE FA3 暂不接受这一路径的 `qv` 参数，因此 MUSA 插件提供两�
 `SGLANG_MUSA_ZERO_ROPE_QV_FALLBACK=0` 可关闭 extend 正确性 fallback。
 | Qwen3.8-Flash-Next | TP8 x DP2（Ascend 910C） | 已验证；见 [适配包](examples/qwen3_8_flash_next_ascend/README.md) |
 
+更多模型适配记录：
+
+- [Hy4-preview-FP8：MUSA 两节点 TP16 适配与算子 RP](docs/models/hy4-preview-fp8-musa.md)
+
 ## 快速开始
 
 ### 安装
