@@ -12,6 +12,7 @@ usable in CI pipelines.
 |--------|-------|-------------|-----|
 | `qwen3_6_35b_a3b_offline_inference.py` | Qwen3.6-35B-A3B | MoE (256 experts) | 1 |
 | `qwen3_6_27b_offline_inference.py` | Qwen3.6-27B | Dense (hybrid attention) | 1 |
+| `qwen3_8_flash_next_musa/` | Qwen3.8-Flash-Next | Qwen4 hybrid MoE | 8 |
 
 ## Ascend model adaptations
 
