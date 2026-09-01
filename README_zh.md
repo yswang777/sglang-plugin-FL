@@ -86,6 +86,7 @@ MATE FA3 暂不接受这一路径的 `qv` 参数，因此 MUSA 插件提供两�
 推荐启动配置见 [`examples/glm53_musa_tp8.sh`](examples/glm53_musa_tp8.sh)。
 `SGLANG_MUSA_PAGED_MLA=0` 可回退到上游 attention 路由；
 `SGLANG_MUSA_ZERO_ROPE_QV_FALLBACK=0` 可关闭 extend 正确性 fallback。
+| Qwen3.8-Flash-Next | TP8 x DP2（Ascend 910C） | 已验证；见 [适配包](examples/qwen3_8_flash_next_ascend/README.md) |
 
 ## 快速开始
 

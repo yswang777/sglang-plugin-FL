@@ -13,6 +13,12 @@ usable in CI pipelines.
 | `qwen3_6_35b_a3b_offline_inference.py` | Qwen3.6-35B-A3B | MoE (256 experts) | 1 |
 | `qwen3_6_27b_offline_inference.py` | Qwen3.6-27B | Dense (hybrid attention) | 1 |
 
+## Ascend model adaptations
+
+- [Qwen3.8-Flash-Next on Ascend 910C](qwen3_8_flash_next_ascend/README.md):
+  TP8 x DP2 source overlay, model-scoped FlagGems fallbacks, eager serving and
+  accuracy-verified BS1 NPU Graph launchers.
+
 ## Usage
 
 ```bash
