@@ -73,6 +73,19 @@ SGLang 的推理引擎依赖 NVIDIA 专有组件：flashinfer 用于 attention�
 | Qwen2.5-14B-Instruct | tp=8 | 已验证 |
 | Qwen3.6-27B | tp=1 | 已验证 |
 | Qwen3.6-35B-A3B | tp=1 | 已验证 |
+| GLM-5.3-Flash | tp=8（MUSA） | 已验证：paged MLA、full decode graph |
+
+### GLM-5.3-Flash on MUSA
+
+GLM-5.3 的 full-attention 层使用 `qk_rope_head_dim=0` 的 absorbed MLA。
+MATE FA3 暂不接受这一路径的 `qv` 参数，因此 MUSA 插件提供两项适配：
+
+- extend/prefill 将 zero-RoPE absorbed MLA 精确改写为 latent Q=K=V attention；
+- decode 使用 Triton paged-MLA kernel 直接读取 512 维 latent KV cache，避免逐 token 重建全部历史 K/V。
+
+推荐启动配置见 [`examples/glm53_musa_tp8.sh`](examples/glm53_musa_tp8.sh)。
+`SGLANG_MUSA_PAGED_MLA=0` 可回退到上游 attention 路由；
+`SGLANG_MUSA_ZERO_ROPE_QV_FALLBACK=0` 可关闭 extend 正确性 fallback。
 
 ## 快速开始
 
