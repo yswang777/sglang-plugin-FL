@@ -1,0 +1,380 @@
+diff --git a/python/sglang/jit_kernel/ngram_embedding.py b/python/sglang/jit_kernel/ngram_embedding.py
+index f07937787..71a4e18d8 100644
+--- a/python/sglang/jit_kernel/ngram_embedding.py
++++ b/python/sglang/jit_kernel/ngram_embedding.py
+@@ -2,11 +2,12 @@ from __future__ import annotations
+ 
+ from typing import TYPE_CHECKING
+ 
++import torch
++
+ from sglang.jit_kernel.utils import cache_once, load_jit
+ from sglang.kernel_api_logging import debug_kernel_api
+ 
+ if TYPE_CHECKING:
+-    import torch
+     from tvm_ffi.module import Module
+ 
+ 
+@@ -22,6 +23,14 @@ def _jit_ngram_embedding_module() -> Module:
+     )
+ 
+ 
++def _use_torch_fallback() -> bool:
++    try:
++        import tvm_ffi.cpp  # noqa: F401
++    except ImportError:
++        return True
++    return False
++
++
+ @debug_kernel_api
+ def compute_n_gram_ids(
+     ne_n: int,
+@@ -36,36 +45,59 @@ def compute_n_gram_ids(
+     column_starts: torch.Tensor,
+     n_gram_ids: torch.Tensor,
+ ) -> None:
+-    """
+-    Compute n-gram IDs for embedding.
++    if not _use_torch_fallback():
++        module = _jit_ngram_embedding_module()
++        module.compute_n_gram_ids(
++            ne_n,
++            ne_k,
++            ne_weights,
++            ne_mods,
++            exclusive_ne_embedder_size_sums,
++            tokens,
++            exclusive_req_len_sums,
++            ne_token_table,
++            row_indices,
++            column_starts,
++            n_gram_ids,
++        )
++        return
+ 
+-    Args:
+-        ne_n: n value for n-gram
+-        ne_k: k value for n-gram configurations
+-        ne_weights: weights tensor with shape [ne_n-1, ne_k, ne_n]
+-        ne_mods: mods tensor with shape [ne_n-1, ne_k]
+-        exclusive_ne_embedder_size_sums: exclusive sum of embedder sizes
+-        tokens: input token ids
+-        exclusive_req_len_sums: exclusive sum of request lengths
+-        ne_token_table: token table for all requests
+-        row_indices: row indices for each request
+-        column_starts: column start positions for each request
+-        n_gram_ids: output tensor for n-gram ids
+-    """
+-    module = _jit_ngram_embedding_module()
+-    module.compute_n_gram_ids(
+-        ne_n,
+-        ne_k,
+-        ne_weights,
+-        ne_mods,
+-        exclusive_ne_embedder_size_sums,
+-        tokens,
+-        exclusive_req_len_sums,
+-        ne_token_table,
+-        row_indices,
+-        column_starts,
+-        n_gram_ids,
+-    )
++    # Torch/NPU equivalent of ComputeNGramIdsKernel. Requests are few and the
++    # configured chunk is small, so this compatibility path favors clarity.
++    batch_size = int(row_indices.numel())
++    for req_id in range(batch_size):
++        out_start = int(exclusive_req_len_sums[req_id].item())
++        out_end = int(exclusive_req_len_sums[req_id + 1].item())
++        req_len = out_end - out_start
++        if req_len <= 0:
++            continue
++        row = row_indices[req_id]
++        column_start = int(column_starts[req_id].item())
++        for n_idx in range(ne_n - 1):
++            real_n = n_idx + 2
++            for k_idx in range(ne_k):
++                modulus = ne_mods[n_idx, k_idx].to(torch.int64)
++                values = torch.zeros(req_len, dtype=torch.int64, device=tokens.device)
++                valid = torch.ones(req_len, dtype=torch.bool, device=tokens.device)
++                for distance in range(real_n):
++                    columns = (
++                        torch.arange(req_len, device=tokens.device)
++                        + column_start
++                        - distance
++                    )
++                    in_range = columns >= 0
++                    safe_columns = columns.clamp_min(0)
++                    historical = ne_token_table[row, safe_columns].to(torch.int64)
++                    valid = valid & in_range & (historical >= 0)
++                    term = historical * ne_weights[n_idx, k_idx, distance].to(torch.int64)
++                    values = values + torch.where(valid, torch.remainder(term, modulus), 0)
++                values = torch.remainder(values, modulus)
++                values = values + exclusive_ne_embedder_size_sums[
++                    n_idx * ne_k + k_idx
++                ].to(torch.int64)
++                n_gram_ids[out_start:out_end, n_idx * ne_k + k_idx].copy_(
++                    values.to(n_gram_ids.dtype)
++                )
+ 
+ 
+ @debug_kernel_api
+@@ -77,26 +109,29 @@ def update_token_table(
+     req_lens: torch.Tensor,
+     ignore_tokens: torch.Tensor | None = None,
+ ) -> None:
+-    """
+-    Update the token table with new tokens.
++    if not _use_torch_fallback():
++        module = _jit_ngram_embedding_module()
++        if ignore_tokens is None:
++            ignore_tokens = tokens.new_empty(0, dtype=tokens.dtype)
++        module.update_token_table(
++            tokens,
++            ne_token_table,
++            row_indices,
++            column_starts,
++            req_lens,
++            ignore_tokens,
++        )
++        return
+ 
+-    Args:
+-        tokens: input token ids
+-        ne_token_table: token table for all requests
+-        row_indices: row indices for each request
+-        column_starts: column start positions for each request
+-        req_lens: request lengths
+-        ignore_tokens: tokens to be ignored (marked as negative in table)
+-    """
+-    module = _jit_ngram_embedding_module()
+-    if ignore_tokens is None:
+-        # Create an empty tensor for ignore_tokens
+-        ignore_tokens = tokens.new_empty(0, dtype=tokens.dtype)
+-    module.update_token_table(
+-        tokens,
+-        ne_token_table,
+-        row_indices,
+-        column_starts,
+-        req_lens,
+-        ignore_tokens,
+-    )
++    offset = 0
++    for req_id in range(int(row_indices.numel())):
++        req_len = int(req_lens[req_id].item())
++        if req_len <= 0:
++            continue
++        values = tokens[offset : offset + req_len]
++        if ignore_tokens is not None and ignore_tokens.numel() > 0:
++            ignored = (values[:, None] == ignore_tokens[None, :]).any(dim=1)
++            values = torch.where(ignored, -values, values)
++        start = int(column_starts[req_id].item())
++        ne_token_table[row_indices[req_id], start : start + req_len].copy_(values)
++        offset += req_len
+diff --git a/python/sglang/srt/configs/__init__.py b/python/sglang/srt/configs/__init__.py
+index bbc121eed..1ea5d3cb5 100644
+--- a/python/sglang/srt/configs/__init__.py
++++ b/python/sglang/srt/configs/__init__.py
+@@ -25,9 +25,14 @@ from sglang.srt.configs.nano_nemotron_vl import (
+ )
+ from sglang.srt.configs.nemotron_h import NemotronHConfig
+ from sglang.srt.configs.olmo3 import Olmo3Config
+-from sglang.srt.configs.qwen3_5 import Qwen3_5Config, Qwen3_5MoeConfig
++from sglang.srt.configs.qwen3_5 import (
++    Qwen3_5Config,
++    Qwen3_5MoeConfig,
++    Qwen3_5MoeTextConfig,
++)
+ from sglang.srt.configs.qwen3_asr import Qwen3ASRConfig
+ from sglang.srt.configs.qwen3_next import Qwen3NextConfig
++from sglang.srt.configs.qwen4_exp import Qwen4ExpConfig, Qwen4ExpTextConfig
+ from sglang.srt.configs.step3_vl import (
+     Step3TextConfig,
+     Step3VisionEncoderConfig,
+@@ -53,8 +58,11 @@ __all__ = [
+     "KimiLinearConfig",
+     "KimiK25Config",
+     "Qwen3NextConfig",
++    "Qwen4ExpConfig",
++    "Qwen4ExpTextConfig",
+     "Qwen3_5Config",
+     "Qwen3_5MoeConfig",
++    "Qwen3_5MoeTextConfig",
+     "DotsVLMConfig",
+     "DotsOCRConfig",
+     "FalconH1Config",
+diff --git a/python/sglang/srt/configs/model_config.py b/python/sglang/srt/configs/model_config.py
+index cf8bbff0b..d41f51d21 100644
+--- a/python/sglang/srt/configs/model_config.py
++++ b/python/sglang/srt/configs/model_config.py
+@@ -187,6 +187,7 @@ class ModelConfig:
+                 "Gemma3ForConditionalGeneration",
+                 "Llama4ForConditionalGeneration",
+                 "Step3VLForConditionalGeneration",
++                "Qwen4ExpForConditionalGeneration",
+             ]
+             if (
+                 self.hf_config.architectures[0] in mm_disabled_models
+@@ -1429,6 +1430,7 @@ multimodal_model_archs = [
+     "VoxtralForConditionalGeneration",
+     "WhisperForConditionalGeneration",
+     "Step3VLForConditionalGeneration",
++                "Qwen4ExpForConditionalGeneration",
+     "POINTSV15ChatModel",
+     "DotsVLMForCausalLM",
+     "DotsOCRForCausalLM",
+diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/srt/model_executor/model_runner.py
+index a833dac43..085147656 100644
+--- a/python/sglang/srt/model_executor/model_runner.py
++++ b/python/sglang/srt/model_executor/model_runner.py
+@@ -2709,7 +2709,10 @@ class ModelRunner(ModelRunnerKVCacheMixin):
+             from sglang.srt.layers.n_gram_embedding import NgramEmbedding
+ 
+             self.token_table = torch.empty(
+-                self.req_to_token_pool.size,
++                # ReqToTokenPool reserves row 0 for padding and allocates real
++                # request indices from 1..size. Match the actual pool tensor so
++                # the highest valid request index remains addressable.
++                self.req_to_token_pool.req_to_token.shape[0],
+                 self.model_config.context_len,
+                 dtype=torch.int32,
+                 device=self.device,
+diff --git a/python/sglang/srt/models/qwen3_5.py b/python/sglang/srt/models/qwen3_5.py
+index 2b3315fbf..7fa533f63 100644
+--- a/python/sglang/srt/models/qwen3_5.py
++++ b/python/sglang/srt/models/qwen3_5.py
+@@ -1028,7 +1028,14 @@ class Qwen3_5ForCausalLM(nn.Module):
+ 
+         # Decoder layers
+         def get_layer(idx: int, prefix: str):
+-            layer_type = config.layers_block_type[idx]
++            if hasattr(config, "layers_block_type"):
++                layer_type = config.layers_block_type[idx]
++            else:
++                # Native transformers Qwen3_5MoeTextConfig has `layer_types`
++                # with values "full_attention"/"linear_attention".
++                layer_type = config.layer_types[idx]
++                if layer_type == "full_attention":
++                    layer_type = "attention"
+             layer_class = ALL_DECODER_LAYER_TYPES[layer_type]
+             if layer_type == "attention":
+                 prefix = add_prefix("self_attn", prefix)
+@@ -1458,7 +1465,11 @@ class Qwen3_5ForConditionalGeneration(Qwen3VLForConditionalGeneration):
+         )
+         self.is_mrope_enabled = "mrope_section" in rope_config
+ 
+-        self.deepstack_visual_indexes = self.visual.deepstack_visual_indexes
++        self.deepstack_visual_indexes = (
++            self.visual.deepstack_visual_indexes
++            if self.visual is not None
++            else None
++        )
+ 
+     def get_hidden_dim(self, module_name: str, layer_idx: int):
+         return self.model.get_hidden_dim(module_name, layer_idx)
+@@ -1611,7 +1622,11 @@ class Qwen3_5MoeForConditionalGeneration(Qwen3VLForConditionalGeneration):
+         )
+         self.is_mrope_enabled = "mrope_section" in rope_config
+ 
+-        self.deepstack_visual_indexes = self.visual.deepstack_visual_indexes
++        self.deepstack_visual_indexes = (
++            self.visual.deepstack_visual_indexes
++            if self.visual is not None
++            else None
++        )
+         self.num_fused_shared_experts = 0
+         if _use_aiter:
+             self.num_fused_shared_experts = self._get_num_fused_shared_experts()
+diff --git a/python/sglang/srt/models/qwen3_vl.py b/python/sglang/srt/models/qwen3_vl.py
+index 1b6c185bc..4b0382ca1 100644
+--- a/python/sglang/srt/models/qwen3_vl.py
++++ b/python/sglang/srt/models/qwen3_vl.py
+@@ -1096,21 +1096,25 @@ class Qwen3VLForConditionalGeneration(nn.Module):
+ 
+         self.use_data_parallel = get_global_server_args().mm_enable_dp_encoder
+ 
+-        self.visual = Qwen3VLMoeVisionModel(
+-            config.vision_config,
+-            # NOTE: Qwen3-VL vision encoder currently supports BitsAndBytes 4-bit quantization.
+-            # Other quantization methods (e.g., GPTQ, AWQ) are untested and may not be supported.
+-            quant_config=None,
+-            norm_eps=getattr(config, "rms_norm_eps", 1e-6),
+-            prefix=add_prefix("model.visual", prefix),
+-            use_data_parallel=self.use_data_parallel,
+-        )
++        self.visual = None
++        if hasattr(config, "vision_config") and config.vision_config is not None:
++            self.visual = Qwen3VLMoeVisionModel(
++                config.vision_config,
++                # NOTE: Qwen3-VL vision encoder currently supports BitsAndBytes 4-bit quantization.
++                # Other quantization methods (e.g., GPTQ, AWQ) are untested and may not be supported.
++                quant_config=None,
++                norm_eps=getattr(config, "rms_norm_eps", 1e-6),
++                prefix=add_prefix("model.visual", prefix),
++                use_data_parallel=self.use_data_parallel,
++            )
+ 
+         # TODO: make it more elegant
+         if language_model_cls is Qwen3LLMModel:
+             self.config: Qwen3VLConfig = config  # for qwen3-vl
+         else:
+-            self.config = config.text_config  # for qwen3-omni / qwen3-vl-moe
++            self.config = (
++                getattr(config, "text_config", None) or config
++            )  # for qwen3-omni / qwen3-vl-moe / bare text
+             self.config.encoder_only = getattr(config, "encoder_only", False)
+             self.config.language_only = getattr(config, "language_only", False)
+             # Propagate tie_word_embeddings from parent config. In transformers
+@@ -1155,10 +1159,15 @@ class Qwen3VLForConditionalGeneration(nn.Module):
+         # like {8:0, 16:1, 24:2}, which stands for the captured deepstack features on
+         # 8, 16, 24 layer will be merged to 0, 1, 2 layer of decoder output hidden_states
+ 
+-        # deepstack
+-        self.deepstack_visual_indexes = config.vision_config.deepstack_visual_indexes
+-        self.num_deepstack_embeddings = len(self.deepstack_visual_indexes)
+-        self.use_deepstack = {Modality.IMAGE: True, Modality.VIDEO: True}
++        # deepstack (disabled when no vision encoder is present)
++        if self.visual is not None:
++            self.deepstack_visual_indexes = config.vision_config.deepstack_visual_indexes
++            self.num_deepstack_embeddings = len(self.deepstack_visual_indexes)
++            self.use_deepstack = {Modality.IMAGE: True, Modality.VIDEO: True}
++        else:
++            self.deepstack_visual_indexes = None
++            self.num_deepstack_embeddings = 0
++            self.use_deepstack = {}
+ 
+         # For EAGLE3 support
+         self.capture_aux_hidden_states = False
+diff --git a/python/sglang/srt/utils/hf_transformers/common.py b/python/sglang/srt/utils/hf_transformers/common.py
+index 914c8856e..151c9d0ab 100644
+--- a/python/sglang/srt/utils/hf_transformers/common.py
++++ b/python/sglang/srt/utils/hf_transformers/common.py
+@@ -45,7 +45,10 @@ from sglang.srt.configs import (
+     Olmo3Config,
+     Qwen3_5Config,
+     Qwen3_5MoeConfig,
++    Qwen3_5MoeTextConfig,
+     Qwen3NextConfig,
++    Qwen4ExpConfig,
++    Qwen4ExpTextConfig,
+     Step3p5Config,
+     Step3VLConfig,
+ )
+@@ -83,6 +86,8 @@ _CONFIG_REGISTRY: Dict[str, Type[PretrainedConfig]] = {
+         Olmo3Config,
+         KimiLinearConfig,
+         Qwen3NextConfig,
++        Qwen4ExpConfig,
++        Qwen4ExpTextConfig,
+         FalconH1Config,
+         GraniteMoeHybridConfig,
+         DotsVLMConfig,
+@@ -93,6 +98,7 @@ _CONFIG_REGISTRY: Dict[str, Type[PretrainedConfig]] = {
+         DeepseekVLV2Config,
+         Qwen3_5Config,
+         Qwen3_5MoeConfig,
++        Qwen3_5MoeTextConfig,
+         JetNemotronConfig,
+         JetVLMConfig,
+         KimiK25Config,
