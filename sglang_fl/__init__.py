@@ -760,13 +760,18 @@ def load_plugin():
     # 0. Build unified config (YAML + env vars)
     config = _build_config()
 
-    # 1. FlagGems ATen ops
+    # 1. Register accelerator-scoped model/config packages and model hooks.
+    from sglang_fl.model_adapters import register_model_adapters
+
+    register_model_adapters()
+
+    # 2. FlagGems ATen ops
     _setup_flaggems(config)
 
-    # 2. Initialize dispatch system (OpManager + backends + policy)
+    # 3. Initialize dispatch system (OpManager + backends + policy)
     _init_dispatch(config)
 
-    # 3. Install dispatch AROUND hook (bridge layer → dispatch.call_op)
+    # 4. Install dispatch AROUND hook (bridge layer → dispatch.call_op)
     oot_enabled = _parse_bool(
         os.environ.get("SGLANG_FL_OOT_ENABLED", "1"), default=True
     )
@@ -789,13 +794,13 @@ def load_plugin():
     else:
         logger.info("Layer 2 (Fused Ops) disabled (SGLANG_FL_OOT_ENABLED=0)")
 
-    # 4. Communicator hooks (CommunicatorFL with FlagCX/torch.distributed)
+    # 5. Communicator hooks (CommunicatorFL with FlagCX/torch.distributed)
     _setup_communicator_hooks()
 
-    # 5. Vendor-specific patches — final overlay on top of all sglang_fl layers
+    # 6. Vendor-specific patches — final overlay on top of all sglang_fl layers
     _apply_vendor_patches()
 
-    # 6. FlagCX PD-disaggregation transfer backend. the FlagCX connector itself is
+    # 7. FlagCX PD-disaggregation transfer backend. the FlagCX connector itself is
     #    imported lazily, when the user actually selects this backend.
     disagg_flagcx = _parse_bool(
         os.environ.get("SGLANG_FL_DISAGG_FLAGCX", "1"), default=True
@@ -809,7 +814,7 @@ def load_plugin():
             logger.warning("FlagCX PD disaggregation registration failed: %s", e)
             disagg_flagcx = False
 
-    # 7. Summary banner — confirm plugin is active (rank 0 only)
+    # 8. Summary banner — confirm plugin is active (rank 0 only)
     if _is_rank0():
         use_fg = _parse_bool(os.environ.get("USE_FLAGGEMS", "1"), default=True)
         aten_status = "OFF" if not use_fg else "ON"
