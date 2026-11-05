@@ -16,6 +16,15 @@ public launch argument and does not change other models' chat formatting.
 export MODEL_PATH=/path/to/MiniCPM-V-4.7-35B-A3B
 export ASCEND_RT_VISIBLE_DEVICES=8,9  # Choose two available Ascend devices.
 export USE_FLAGGEMS=1
+export SGLANG_PLUGINS=sglang_fl
+export SGLANG_FL_FLAGOS_BLACKLIST='argmax,index_put_,_index_put_impl_,index_select,index_copy_,max,sum,fill_scalar_,index,floor_divide,gather,conv1d,conv2d'
+export SGLANG_FL_PREFER=vendor
+export SGLANG_FL_PER_OP='silu_and_mul=flagos'
+export SGLANG_FL_RECV_COALESCE_MS=100
+export SGLANG_FL_CAUSAL_CONV_PREFILL_BUCKET=640
+export SGLANG_FL_CAUSAL_CONV_PREFILL_IMPL=tiled_bucketed
+export SGLANG_FL_CAUSAL_CONV_PREFILL_BUCKET_QUANTUM=128
+export SGLANG_FL_CAUSAL_CONV_PREFILL_FAST_MIN_TOKENS=1024
 
 python -m sglang.launch_server \
   --model-path "$MODEL_PATH" \
@@ -36,10 +45,17 @@ python -m sglang.launch_server \
 
 The device selection and port are examples; choose free resources on the
 target host. Keep the model and its template from the same checkpoint. The
-model-specific flags above are validated with the stated SGLang version;
-recheck template selection and multimodal behavior after upgrading SGLang.
+model-scoped environment above is the tested FlagOS image configuration;
+`SGLANG_FL_FLAGOS_BLACKLIST` replaces the Ascend YAML default, so keep the
+complete list when reproducing this run. `SGLANG_FL_PREFER=vendor` sets the
+general backend preference, while `SGLANG_FL_PER_OP` selects FlagGems for
+`silu_and_mul`. The causal-conv and receive-coalescing settings are tied to
+this validated image stack. Recheck the effective routes, template selection,
+and multimodal behavior after changing the image or SGLang version. Do not
+apply this model-specific blacklist as a global Ascend default.
 
-In a separate terminal, run the actual API regression example:
+The API regression client requires Python with Pillow installed (included in
+the tested FlagOS image). In a separate terminal, run:
 
 ```bash
 python examples/minicpmv47_35b_ascend/verify.py \
