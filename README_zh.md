@@ -71,6 +71,7 @@ SGLang 的推理引擎依赖 NVIDIA 专有组件：flashinfer 用于 attention�
 |------|-----|------|
 | Qwen2.5-0.5B-Instruct | tp=1 | 已验证 |
 | Qwen2.5-14B-Instruct | tp=8 | 已验证 |
+| MiniCPM-V 4.7 35B-A3B | TP2、BF16、昇腾 910C、SGLang 0.5.11 | 文本及单图/多图服务小样本已验证；精度、负载和性能验证待完成。[示例](examples/minicpmv47_35b_ascend/verify.py) |
 | Qwen3.6-27B | tp=1 | 已验证 |
 | Qwen3.6-35B-A3B | tp=1 | 已验证 |
 | GLM-5.3-Flash | tp=8（MUSA） | 已验证：paged MLA、full decode graph |

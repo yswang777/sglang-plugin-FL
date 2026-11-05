@@ -14,6 +14,15 @@ usable in CI pipelines.
 | `qwen3_6_27b_offline_inference.py` | Qwen3.6-27B | Dense (hybrid attention) | 1 |
 | `qwen3_8_flash_next_musa/` | Qwen3.8-Flash-Next | Qwen4 hybrid MoE | 8 |
 
+## Serving Regression Examples
+
+| Example | Model | Hardware | Topology |
+|---------|-------|----------|----------|
+| [MiniCPM-V 4.7 35B-A3B](minicpmv47_35b_ascend/README.md) | MiniCPM-V 4.7 35B-A3B | Ascend 910C | TP2, BF16 |
+
+The MiniCPM-V example includes the SGLang launch command and a runnable API
+check for text, one/two/16 images, and four concurrent image requests.
+
 ## Ascend model adaptations
 
 - [Qwen3.8-Flash-Next on Ascend 910C](qwen3_8_flash_next_ascend/README.md):

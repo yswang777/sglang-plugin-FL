@@ -56,6 +56,7 @@ Chip vendors only need to implement a backend class + `register_ops.py`. The dis
 | GLM-5.3-Flash | tp=8 (MUSA) | Verified: paged MLA, full decode graph |
 | Qwen3.8-Flash-Next | TP8 x DP2 (Ascend 910C) | Verified; see the [adaptation bundle](examples/qwen3_8_flash_next_ascend/README.md) |
 | Qwen2.5-14B-Instruct | tp=8 | Verified |
+| MiniCPM-V 4.7 35B-A3B | TP2, BF16, Ascend 910C, SGLang 0.5.11 | Text and single/multi-image serving smoke verified; accuracy, load and performance validation pending. [Example](examples/minicpmv47_35b_ascend/verify.py) |
 
 ## Quick Start
 
